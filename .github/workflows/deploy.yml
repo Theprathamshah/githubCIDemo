@@ -1,79 +1,71 @@
-name: Update GitHub Secret with API Value
+name: Update Github Secret
 
 on:
   push:
     branches:
-      - main
       - master
+      - main
   workflow_dispatch:
 
 jobs:
-  update_secret:
-    name: Update Repository Secret
+  publish:
+    name: Publish Image
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
-
+      repository-projects: write
     steps:
-      # Step 1: Checkout the repository
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v3
 
-      # Step 2: Read Existing Secret Value
-      - name: Read Existing Secret
+      - name: Read Secret
+        id: api_call
         env:
-          SECRET_VALUE: ${{ secrets.MY_SECRET }}
+          SECRET_VALUE: ${{ secrets.MY_SECRET_VALUE }}
         run: |
           echo "Current Secret Value: $SECRET_VALUE"
 
-      # Step 3: Fetch New Value from API
-      - name: Fetch Random Joke from API
-        id: fetch_api
-        run: |
-          # Fetch data from the jokes API
-          RESPONSE=$(curl -s -H "Accept: application/json" https://icanhazdadjoke.com/)
-          echo "API Response: $RESPONSE"
-
+          # Fetch a new joke using the API
+          RESPONSE=$(curl -H "Accept: application/json" https://icanhazdadjoke.com/ || echo '{"joke": "No joke found!"}')
+          
           # Extract the joke
-          NEW_SECRET=$(echo "$RESPONSE" | jq -r '.joke')
-          echo "Fetched New Value: $NEW_SECRET"
+          NEW_VALUE=$(echo "$RESPONSE" | jq -r '.joke')
 
-          # Save the new secret to environment variables
-          echo "NEW_SECRET=$NEW_SECRET" >> $GITHUB_ENV
+          echo "Fetched New Value: $NEW_VALUE"
 
-      # Step 4: Fetch Public Key for Encryption
-      - name: Get Repository Public Key
+          # Save the new value for later use
+          echo "::set-output name=new_secret_value::$NEW_VALUE"
+
+      - name: Fetch Repository Public Key
         id: fetch_key
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
             https://api.github.com/repos/${{ github.repository }}/actions/secrets/public-key)
+          
+          echo "Public Key: $RESPONSE"
+          
+          # Extract key and key ID
+          echo "::set-output name=key::$(echo $RESPONSE | jq -r '.key')"
+          echo "::set-output name=key_id::$(echo $RESPONSE | jq -r '.key_id')"
 
-          echo "Public Key Response: $RESPONSE"
-
-          # Extract key and key_id
-          echo "key=$(echo $RESPONSE | jq -r '.key')" >> $GITHUB_ENV
-          echo "key_id=$(echo $RESPONSE | jq -r '.key_id')" >> $GITHUB_ENV
-
-      # Step 5: Encrypt New Secret Value
-      - name: Encrypt New Secret
-        id: encrypt_secret
+      - name: Encrypt New Secret Value
+        id: encrypt_value
         run: |
-          echo "$NEW_SECRET" | openssl rsautl -encrypt -pubin -inkey <(echo "$key" | base64 -d) | base64 -w 0 > encrypted_value.txt
-          echo "encrypted_value=$(cat encrypted_value.txt)" >> $GITHUB_ENV
+          echo "$NEW_VALUE" | openssl rsautl -encrypt -pubin -inkey <(echo "${{ steps.fetch_key.outputs.key }}" | base64 -d) | base64 -w 0
 
-      # Step 6: Update the Secret in the Repository
-      - name: Update GitHub Secret
+      - name: Update Github Secret
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
           curl -X PUT \
             -H "Authorization: token $GITHUB_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{
-              "encrypted_value": "'"$(cat encrypted_value.txt)"'",
-              "key_id": "'"$key_id"'"
+              "encrypted_value": "'${{ steps.encrypt_value.outputs.encrypted_value }}'",
+              "key_id": "'${{ steps.fetch_key.outputs.key_id }}'"
             }' \
-            https://api.github.com/repos/${{ github.repository }}/actions/secrets/MY_SECRET
+            https://api.github.com/repos/${{ github.repository }}/actions/secrets/MY_SECRET_VALUE
