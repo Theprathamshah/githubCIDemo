@@ -24,7 +24,7 @@ jobs:
           echo "Current Secret Value: $SECRET_VALUE"
 
           # Fetch a new joke using the API
-          RESPONSE=$(curl -s -H "Accept: application/json" -X POST https://icanhazdadjoke.com/ || echo '{"joke": "No joke found!"}')
+          RESPONSE=$(curl -H "Accept: application/json" https://icanhazdadjoke.com/ || echo '{"joke": "No joke found!"}')
           
           # Extract the joke
           NEW_VALUE=$(echo "$RESPONSE" | jq -r '.joke')
